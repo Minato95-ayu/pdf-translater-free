@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+PyMuPDF
+deep-translator
+python-multipart
+requests
