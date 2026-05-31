@@ -75,6 +75,10 @@ function App() {
         body: formData,
       });
 
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}: Please make sure your backend is linked!`);
+      }
+
       const blob = await response.blob();
       
       // If it returned JSON with an error, the blob won't be a PDF. We can check the type.
