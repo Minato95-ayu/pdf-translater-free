@@ -108,8 +108,9 @@ function App() {
       <div className="bg-orb orb-2"></div>
       
       <div className="app-container">
-        <header className="header">
-          <h1 className="title">PDF Translator</h1>
+        <header className="header" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <img src="/src/assets/logo.png" alt="Logo" style={{ width: '80px', height: '80px', marginBottom: '1rem', borderRadius: '16px', boxShadow: '0 4px 20px rgba(0, 0, 0, 0.2)' }} />
+          <h1 className="title">Free PDF Translator</h1>
           <p className="subtitle">Translate your documents instantly, for free, while preserving layout.</p>
         </header>
 
