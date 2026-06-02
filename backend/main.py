@@ -46,6 +46,9 @@ def ocr_image(image_bytes):
 def fast_batch_translate(texts: list, target_lang: str, source_lang: str = 'auto'):
     if not texts: return {}
     translator = GoogleTranslator(source=source_lang, target=target_lang)
+    batches = []
+    current_batch = []
+    current_len = 0
     import re
     
     # Pre-filter to avoid translating single English letters, numbers, or simple markers (e.g. "A", "B", "1. A")
@@ -54,25 +57,59 @@ def fast_batch_translate(texts: list, target_lang: str, source_lang: str = 'auto
     for t in texts:
         clean_t = t.replace('\n', ' ').strip()
         if not clean_t: continue
-        # Skip translation for single characters or markers like "1. A", or purely numeric/symbols
-        if (len(clean_t) == 1 and clean_t.isascii() and clean_t.isalpha()) or \
-           re.match(r'^\d+\.?\s*[a-zA-Z]$', clean_t) or \
-           re.match(r'^[\d\s\W]+$', clean_t):
+        
+        is_math = False
+        alpha_chars = len(re.findall(r'[^\W\d_]', clean_t))
+        total_chars = len(clean_t)
+        has_words = bool(re.search(r'[^\W\d_]{3,}', clean_t))
+        has_math_ops = bool(re.search(r'[=\+\-\*/\^]', clean_t))
+        
+        if total_chars > 0:
+            if (alpha_chars / total_chars < 0.4) or (has_math_ops and not has_words) or (not has_words and alpha_chars < 5):
+                is_math = True
+                
+        if is_math:
             translated_map[t] = t
         else:
             to_translate.append(t)
             
-    def process_item(t):
+    for t in to_translate:
+        clean_t = t.replace('\n', ' ').strip()
+        if current_len + len(clean_t) + 5 > 4000:
+            batches.append(current_batch)
+            current_batch = [clean_t]
+            current_len = len(clean_t)
+        else:
+            current_batch.append(clean_t)
+            current_len += len(clean_t) + 5
+    if current_batch:
+        batches.append(current_batch)
+        
+    def process_batch(batch):
+        joined = "\n\n".join(batch)
         try:
-            return t, translator.translate(t)
+            res = translator.translate(joined)
+            parts = [p.strip() for p in res.split('\n\n')]
+            if len(parts) == len(batch):
+                for orig, trans in zip(batch, parts):
+                    translated_map[orig] = trans
+            else:
+                for orig in batch:
+                    try:
+                        translated_map[orig] = translator.translate(orig)
+                    except:
+                        translated_map[orig] = orig
         except:
-            return t, t
+            for orig in batch:
+                try:
+                    translated_map[orig] = translator.translate(orig)
+                except:
+                    translated_map[orig] = orig
 
     with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(process_item, t) for t in to_translate]
+        futures = [executor.submit(process_batch, b) for b in batches]
         for f in as_completed(futures):
-            orig, trans = f.result()
-            translated_map[orig] = trans
+            pass
             
     return translated_map
 
@@ -114,8 +151,15 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
             unique_texts = list(set([b[4].replace('\n', ' ').strip() for b in text_blocks if b[4].strip()]))
             translated_map = fast_batch_translate(unique_texts, target_lang, source_lang)
             
-            # First pass: Erase all original text rectangles
+            blocks_to_translate = []
             for block in text_blocks:
+                orig_text = block[4].replace('\n', ' ').strip()
+                translated_text = translated_map.get(orig_text, orig_text)
+                if translated_text != orig_text:
+                    blocks_to_translate.append((block, orig_text, translated_text))
+            
+            # First pass: Erase only translated text rectangles
+            for block, _, _ in blocks_to_translate:
                 rect = fitz.Rect(block[:4])
                 page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
 
@@ -123,10 +167,8 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
             archive = fitz.Archive(os.path.dirname(os.path.abspath(__file__)))
             css = f"@font-face {{ font-family: 'noto'; src: url('font.ttf'); }} * {{ font-family: 'noto', sans-serif; }}"
             
-            for block in text_blocks:
+            for block, orig_text, translated_text in blocks_to_translate:
                 rect = fitz.Rect(block[:4])
-                orig_text = block[4].replace('\n', ' ').strip()
-                translated_text = translated_map.get(orig_text, orig_text)
                 
                 # Strictly preserve the original width to avoid column overlapping
                 # Give a little extra height to accommodate line height differences
