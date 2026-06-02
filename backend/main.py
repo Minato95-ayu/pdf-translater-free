@@ -46,9 +46,6 @@ def ocr_image(image_bytes):
 def fast_batch_translate(texts: list, target_lang: str, source_lang: str = 'auto'):
     if not texts: return {}
     translator = GoogleTranslator(source=source_lang, target=target_lang)
-    batches = []
-    current_batch = []
-    current_len = 0
     import re
     
     # Pre-filter to avoid translating single English letters, numbers, or simple markers (e.g. "A", "B", "1. A")
@@ -65,43 +62,17 @@ def fast_batch_translate(texts: list, target_lang: str, source_lang: str = 'auto
         else:
             to_translate.append(t)
             
-    for t in to_translate:
-        clean_t = t.replace('\n', ' ').strip()
-        if current_len + len(clean_t) + 5 > 4000:
-            batches.append(current_batch)
-            current_batch = [clean_t]
-            current_len = len(clean_t)
-        else:
-            current_batch.append(clean_t)
-            current_len += len(clean_t) + 5
-    if current_batch:
-        batches.append(current_batch)
-        
-    def process_batch(batch):
-        joined = " ||| ".join(batch)
+    def process_item(t):
         try:
-            res = translator.translate(joined)
-            parts = [p.strip() for p in re.split(r'\s*\|{2,3}\s*', res)]
-            if len(parts) == len(batch):
-                for orig, trans in zip(batch, parts):
-                    translated_map[orig] = trans
-            else:
-                for orig in batch:
-                    try:
-                        translated_map[orig] = translator.translate(orig)
-                    except:
-                        translated_map[orig] = orig
+            return t, translator.translate(t)
         except:
-            for orig in batch:
-                try:
-                    translated_map[orig] = translator.translate(orig)
-                except:
-                    translated_map[orig] = orig
+            return t, t
 
     with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(process_batch, b) for b in batches]
+        futures = [executor.submit(process_item, t) for t in to_translate]
         for f in as_completed(futures):
-            pass
+            orig, trans = f.result()
+            translated_map[orig] = trans
             
     return translated_map
 
@@ -134,16 +105,14 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                         translated_text = extracted_text
                     page.draw_rect(page.rect, color=(1, 1, 1), fill=(1, 1, 1))
                     text_rect = fitz.Rect(20, 20, page.rect.width - 20, page.rect.height - 20)
-                    page.insert_textbox(text_rect, translated_text, fontsize=12, fontname=used_font, color=(0, 0, 0))
+                    css = f"@font-face {{ font-family: 'noto'; src: url('font.ttf'); }} * {{ font-family: 'noto', sans-serif; }}"
+                    html = f"<style>{css}</style><div style=\"font-size: 12pt; color: black; line-height: 1.2;\">{translated_text}</div>"
+                    archive = fitz.Archive(os.path.dirname(os.path.abspath(__file__)))
+                    page.insert_htmlbox(text_rect, html, archive=archive, scale_low=0.1)
                 continue
             
             unique_texts = list(set([b[4].replace('\n', ' ').strip() for b in text_blocks if b[4].strip()]))
             translated_map = fast_batch_translate(unique_texts, target_lang, source_lang)
-            
-            dummy_doc = fitz.open()
-            dummy_page = dummy_doc.new_page(width=page.rect.width, height=page.rect.height)
-            if os.path.exists(font_path):
-                dummy_page.insert_font(fontname="noto", fontfile=font_path)
             
             # First pass: Erase all original text rectangles
             for block in text_blocks:
@@ -151,34 +120,21 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                 page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
 
             # Second pass: Insert translated text
+            archive = fitz.Archive(os.path.dirname(os.path.abspath(__file__)))
+            css = f"@font-face {{ font-family: 'noto'; src: url('font.ttf'); }} * {{ font-family: 'noto', sans-serif; }}"
+            
             for block in text_blocks:
                 rect = fitz.Rect(block[:4])
                 orig_text = block[4].replace('\n', ' ').strip()
                 translated_text = translated_map.get(orig_text, orig_text)
                 
                 # Strictly preserve the original width to avoid column overlapping
-                write_rect = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1)
+                # Give a little extra height to accommodate line height differences
+                write_rect = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1 + 10)
                 
-                best_fz = 6
-                res = -1
-                # Try to find a font size that fits the original rectangle
-                for fz in range(12, 5, -1):
-                    res = dummy_page.insert_textbox(write_rect, translated_text, fontsize=fz, fontname=used_font)
-                    if res >= 0:
-                        best_fz = fz
-                        break
-                
-                # If it still doesn't fit at font size 6, expand downwards (height) incrementally
-                if res < 0:
-                    for extra_height in [15, 30, 45, 60]:
-                        write_rect = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1 + extra_height)
-                        res = dummy_page.insert_textbox(write_rect, translated_text, fontsize=6, fontname=used_font)
-                        if res >= 0:
-                            break
-                
-                page.insert_textbox(write_rect, translated_text, fontsize=best_fz, fontname=used_font, color=(0, 0, 0))
-                
-            dummy_doc.close()
+                html = f"<style>{css}</style><div style=\"font-size: 11pt; color: black; line-height: 1.1;\">{translated_text}</div>"
+                # scale_low=0.1 automatically scales down font size until it fits
+                page.insert_htmlbox(write_rect, html, archive=archive, scale_low=0.1)
                     
         doc.save(output_path, garbage=4, deflate=True)
         doc.close()
