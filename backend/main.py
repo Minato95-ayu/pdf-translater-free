@@ -170,9 +170,8 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
             for block, orig_text, translated_text in blocks_to_translate:
                 rect = fitz.Rect(block[:4])
                 
-                # Strictly preserve the original width to avoid column overlapping
-                # Give a little extra height to accommodate line height differences
-                write_rect = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1 + 10)
+                # Strictly preserve the original bounding box to avoid overlapping with adjacent blocks
+                write_rect = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1)
                 
                 html = f"<style>{css}</style><div style=\"font-size: 11pt; color: black; line-height: 1.1;\">{translated_text}</div>"
                 # scale_low=0.1 automatically scales down font size until it fits
