@@ -126,8 +126,40 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
             
             used_font = "noto" if os.path.exists(font_path) else "helv"
 
-            blocks = page.get_text("blocks")
-            text_blocks = [b for b in blocks if b[6] == 0 and len(b[4].strip()) >= 2]
+            text_dict = page.get_text("dict")
+            text_blocks = []
+            for b in text_dict.get("blocks", []):
+                if b.get("type") == 0:
+                    cols = []
+                    for l in b.get("lines", []):
+                        matched_col = None
+                        for col in cols:
+                            col_x0 = min([cline["bbox"][0] for cline in col])
+                            col_x1 = max([cline["bbox"][2] for cline in col])
+                            if not (l["bbox"][2] < col_x0 - 10 or l["bbox"][0] > col_x1 + 10):
+                                matched_col = col
+                                break
+                        if matched_col is not None:
+                            matched_col.append(l)
+                        else:
+                            cols.append([l])
+                    
+                    for col_lines in cols:
+                        col_lines.sort(key=lambda x: x["bbox"][1])
+                        text = ""
+                        for i, l in enumerate(col_lines):
+                            line_text = "".join([s.get("text", "") for s in l.get("spans", [])])
+                            text += line_text
+                            if i < len(col_lines) - 1:
+                                text += "\n"
+                        if len(text.strip()) >= 2:
+                            bbox = [
+                                min([l["bbox"][0] for l in col_lines]),
+                                min([l["bbox"][1] for l in col_lines]),
+                                max([l["bbox"][2] for l in col_lines]),
+                                max([l["bbox"][3] for l in col_lines])
+                            ]
+                            text_blocks.append((bbox[0], bbox[1], bbox[2], bbox[3], text, b.get("number", 0), 0))
             
             if len(text_blocks) == 0:
                 print("No text found, running OCR on page image...")
