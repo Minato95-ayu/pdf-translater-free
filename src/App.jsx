@@ -70,6 +70,17 @@ function App() {
     }
   };
 
+  const handleSwapLanguages = () => {
+    if (sourceLang === 'auto') {
+      setSourceLang(targetLang);
+      setTargetLang('en'); // Default to English if swapping from auto
+    } else {
+      const temp = sourceLang;
+      setSourceLang(targetLang);
+      setTargetLang(temp);
+    }
+  };
+
   const handleTranslate = async () => {
     if (!file) return;
     
@@ -110,7 +121,7 @@ function App() {
     } catch (error) {
       console.error(error);
       setStatus('error');
-      alert("An error occurred during translation. Please try again.");
+      alert(error.message || "An error occurred during translation. Please try again.");
     }
   };
 
@@ -202,6 +213,17 @@ function App() {
                         </option>
                       ))}
                     </select>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'center', margin: '-0.5rem 0' }}>
+                    <button 
+                      className="btn" 
+                      style={{ padding: '0.5rem', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.1)' }}
+                      onClick={handleSwapLanguages}
+                      title="Swap Languages"
+                    >
+                      <RefreshCw size={18} />
+                    </button>
                   </div>
 
                   <div className="input-group" style={{ gap: '0.5rem' }}>

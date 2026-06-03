@@ -9,6 +9,7 @@ import uuid
 import requests
 import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from langdetect import detect
 
 app = FastAPI(title="Free PDF Translator API")
 
@@ -116,6 +117,29 @@ def fast_batch_translate(texts: list, target_lang: str, source_lang: str = 'auto
 def translate_pdf_task(input_path: str, output_path: str, target_lang: str, source_lang: str):
     try:
         doc = fitz.open(input_path)
+        
+        if source_lang != 'auto':
+            sample_text = ""
+            for page in doc:
+                text = page.get_text()
+                if text.strip():
+                    sample_text += text + " "
+                if len(sample_text) > 500:
+                    break
+            
+            if len(sample_text.strip()) > 20:
+                try:
+                    detected_lang = detect(sample_text)
+                    if detected_lang == 'zh-cn':
+                        detected_lang = 'zh-CN'
+                    # langdetect 'en' matches our 'en', 'hi' matches our 'hi'
+                    # If mismatch, raise specific error
+                    if detected_lang != source_lang:
+                        raise Exception("diya gya laungues information match nahi kar raah")
+                except Exception as e:
+                    if str(e) == "diya gya laungues information match nahi kar raah":
+                        raise e
+
         font_path = "font.ttf"
         
         for page in doc:
@@ -212,6 +236,8 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
         doc.save(output_path, garbage=4, deflate=True)
         doc.close()
     except Exception as e:
+        if str(e) == "diya gya laungues information match nahi kar raah":
+            raise e
         print(f"Failed to process PDF: {e}")
 
 from fastapi.staticfiles import StaticFiles
@@ -231,7 +257,11 @@ async def translate_pdf_endpoint(
     with open(input_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
         
-    translate_pdf_task(input_path, output_path, target_lang, source_lang)
+    try:
+        translate_pdf_task(input_path, output_path, target_lang, source_lang)
+    except Exception as e:
+        if str(e) == "diya gya laungues information match nahi kar raah":
+            return {"error": str(e)}
     
     if not os.path.exists(output_path):
         return {"error": "Failed to translate PDF"}
