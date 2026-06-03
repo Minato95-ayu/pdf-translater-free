@@ -45,6 +45,10 @@ function App() {
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const droppedFile = e.dataTransfer.files[0];
       if (droppedFile.type === 'application/pdf') {
+        if (droppedFile.size > 20 * 1024 * 1024) {
+          alert("File is too large. Maximum size is 20MB.");
+          return;
+        }
         setFile(droppedFile);
         setStatus('idle');
       } else {
@@ -55,7 +59,13 @@ function App() {
 
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
+      const selectedFile = e.target.files[0];
+      if (selectedFile.size > 20 * 1024 * 1024) {
+        alert("File is too large. Maximum size is 20MB.");
+        e.target.value = null;
+        return;
+      }
+      setFile(selectedFile);
       setStatus('idle');
     }
   };
@@ -70,8 +80,12 @@ function App() {
     formData.append('source_lang', sourceLang);
 
     try {
-      // Use the proxy configured in vite.config.js
-      const response = await fetch('/api/translate', {
+      const apiUrl = import.meta.env.PROD 
+        ? 'https://pdf-translator-backend-av6m.onrender.com/translate' 
+        : '/api/translate';
+
+      // Use the direct backend URL in production to bypass Vercel's payload limits
+      const response = await fetch(apiUrl, {
         method: 'POST',
         body: formData,
       });
@@ -160,7 +174,7 @@ function App() {
                       <>
                         <UploadCloud className="dropzone-icon" />
                         <div className="dropzone-text">Click to upload or drag and drop</div>
-                        <div className="dropzone-subtext">PDF files only (Max 10MB)</div>
+                        <div className="dropzone-subtext">PDF files only (Max 20MB)</div>
                       </>
                     )}
                     <input 
