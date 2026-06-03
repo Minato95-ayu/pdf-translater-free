@@ -170,12 +170,24 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                     
                     for col_lines in cols:
                         col_lines.sort(key=lambda x: x["bbox"][1])
+                        font_sizes = []
+                        colors = []
                         text = ""
                         for i, l in enumerate(col_lines):
-                            line_text = "".join([s.get("text", "") for s in l.get("spans", [])])
+                            line_text = ""
+                            for s in l.get("spans", []):
+                                font_sizes.append(s.get("size", 11))
+                                colors.append(s.get("color", 0))
+                                line_text += s.get("text", "")
                             text += line_text
                             if i < len(col_lines) - 1:
                                 text += "\n"
+                        
+                        med_size = sorted(font_sizes)[len(font_sizes)//2] if font_sizes else 11
+                        from collections import Counter
+                        most_common_color = Counter(colors).most_common(1)[0][0] if colors else 0
+                        hex_color = "#{:06x}".format(most_common_color & 0xFFFFFF)
+                        
                         if len(text.strip()) >= 2:
                             bbox = [
                                 min([l["bbox"][0] for l in col_lines]),
@@ -183,7 +195,7 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                                 max([l["bbox"][2] for l in col_lines]),
                                 max([l["bbox"][3] for l in col_lines])
                             ]
-                            text_blocks.append((bbox[0], bbox[1], bbox[2], bbox[3], text, b.get("number", 0), 0))
+                            text_blocks.append((bbox[0], bbox[1], bbox[2], bbox[3], text, med_size, hex_color))
             
             if len(text_blocks) == 0:
                 print("No text found, running OCR on page image...")
@@ -217,7 +229,9 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
             # First pass: Erase only translated text rectangles
             for block, _, _ in blocks_to_translate:
                 rect = fitz.Rect(block[:4])
-                page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
+                page.add_redact_annot(rect, fill=(1, 1, 1))
+                
+            page.apply_redactions(images=0)
 
             # Second pass: Insert translated text
             archive = fitz.Archive(os.path.dirname(os.path.abspath(__file__)))
@@ -225,11 +239,13 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
             
             for block, orig_text, translated_text in blocks_to_translate:
                 rect = fitz.Rect(block[:4])
+                med_size = block[5]
+                hex_color = block[6]
                 
                 # Strictly preserve the original bounding box to avoid overlapping with adjacent blocks
                 write_rect = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1)
                 
-                html = f"<style>{css}</style><div style=\"font-size: 11pt; color: black; line-height: 1.1;\">{translated_text}</div>"
+                html = f"<style>{css}</style><div style=\"font-size: {med_size}pt; color: {hex_color}; line-height: 1.2;\">{translated_text}</div>"
                 # scale_low=0.1 automatically scales down font size until it fits
                 page.insert_htmlbox(write_rect, html, archive=archive, scale_low=0.1)
                     
