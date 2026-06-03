@@ -209,7 +209,7 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                     except:
                         translated_text = extracted_text
                     page.add_redact_annot(page.rect, fill=(1, 1, 1))
-                    page.apply_redactions(images=0)
+                    page.apply_redactions(images=2)
                     text_rect = fitz.Rect(20, 20, page.rect.width - 20, page.rect.height - 20)
                     css = f"@font-face {{ font-family: 'noto'; src: url('font.ttf'); }} * {{ font-family: 'noto', sans-serif; }}"
                     html = f"<style>{css}</style><div style=\"font-size: 12pt; color: black; line-height: 1.2;\">{translated_text}</div>"
@@ -232,7 +232,7 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                 rect = fitz.Rect(block[:4])
                 page.add_redact_annot(rect, fill=(1, 1, 1))
                 
-            page.apply_redactions(images=0)
+            page.apply_redactions(images=2)
 
             # Second pass: Insert translated text
             archive = fitz.Archive(os.path.dirname(os.path.abspath(__file__)))
