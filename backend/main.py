@@ -208,7 +208,8 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                         translated_text = GoogleTranslator(source=source_lang, target=target_lang).translate(extracted_text)
                     except:
                         translated_text = extracted_text
-                    page.draw_rect(page.rect, color=(1, 1, 1), fill=(1, 1, 1))
+                    page.add_redact_annot(page.rect, fill=(1, 1, 1))
+                    page.apply_redactions(images=0)
                     text_rect = fitz.Rect(20, 20, page.rect.width - 20, page.rect.height - 20)
                     css = f"@font-face {{ font-family: 'noto'; src: url('font.ttf'); }} * {{ font-family: 'noto', sans-serif; }}"
                     html = f"<style>{css}</style><div style=\"font-size: 12pt; color: black; line-height: 1.2;\">{translated_text}</div>"
