@@ -209,10 +209,10 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                     except:
                         translated_text = extracted_text
                     page.add_redact_annot(page.rect, fill=(1, 1, 1))
-                    page.apply_redactions(images=2)
+                    page.apply_redactions(images=2, graphics=1)
                     text_rect = fitz.Rect(20, 20, page.rect.width - 20, page.rect.height - 20)
                     css = f"@font-face {{ font-family: 'noto'; src: url('font.ttf'); }} * {{ font-family: 'noto', sans-serif; }}"
-                    html = f"<style>{css}</style><div style=\"font-size: 12pt; color: black; line-height: 1.2;\">{translated_text}</div>"
+                    html = f"<style>{css}</style><div style=\"background-color: white; font-size: 12pt; color: black; line-height: 1.2;\">{translated_text}</div>"
                     archive = fitz.Archive(os.path.dirname(os.path.abspath(__file__)))
                     page.insert_htmlbox(text_rect, html, archive=archive, scale_low=0.1)
                 continue
@@ -232,7 +232,7 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                 rect = fitz.Rect(block[:4])
                 page.add_redact_annot(rect, fill=(1, 1, 1))
                 
-            page.apply_redactions(images=2)
+            page.apply_redactions(images=2, graphics=1)
 
             # Second pass: Insert translated text
             archive = fitz.Archive(os.path.dirname(os.path.abspath(__file__)))
@@ -246,7 +246,7 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                 # Strictly preserve the original bounding box to avoid overlapping with adjacent blocks
                 write_rect = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1)
                 
-                html = f"<style>{css}</style><div style=\"font-size: {med_size}pt; color: {hex_color}; line-height: 1.2;\">{translated_text}</div>"
+                html = f"<style>{css}</style><div style=\"background-color: white; font-size: {med_size}pt; color: {hex_color}; line-height: 1.2;\">{translated_text}</div>"
                 # scale_low=0.1 automatically scales down font size until it fits
                 page.insert_htmlbox(write_rect, html, archive=archive, scale_low=0.1)
                     
