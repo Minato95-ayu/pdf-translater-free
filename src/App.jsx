@@ -28,16 +28,11 @@ function App() {
   const [fileName, setFileName] = useState('');
   const fileInputRef = useRef(null);
 
-  const DIRECT_URL = 'https://pdf-translator-backend-av6m.onrender.com';
+  const HF_SPACE = 'https://ayushoo1-pdf-translator-backend.hf.space';
+  const FALLBACK_URL = 'https://pdf-translator-backend-av6m.onrender.com';
   const PROXY_URL = '/api';
 
-  // Wake up the Render backend immediately when the page loads
-  useEffect(() => {
-    fetch(DIRECT_URL + '/').catch(() => {
-      // Direct blocked (adblocker), try via proxy
-      fetch(PROXY_URL + '/').catch(() => {});
-    });
-  }, []);
+  // No wakeup needed — HF Spaces doesn't sleep!
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -92,55 +87,80 @@ function App() {
     }
   };
 
-  const handleTranslate = async () => {
-    if (!file) return;
+  const translateViaGradio = async (file, sourceLang, targetLang) => {
+    // Step 1: Upload file to Gradio
+    const uploadForm = new FormData();
+    uploadForm.append('files', file);
+    const uploadRes = await fetch(HF_SPACE + '/upload', {
+      method: 'POST',
+      body: uploadForm,
+    });
+    if (!uploadRes.ok) throw new Error('HF upload failed');
+    const uploadData = await uploadRes.json();
+    const filePath = uploadData[0];
+
+    // Step 2: Call predict API
+    const predictRes = await fetch(HF_SPACE + '/api/predict', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data: [
+          { path: filePath, orig_name: file.name, size: file.size, mime_type: 'application/pdf' },
+          sourceLang,
+          targetLang
+        ]
+      }),
+    });
+    if (!predictRes.ok) throw new Error('HF predict failed');
+    const predictData = await predictRes.json();
     
-    setStatus('translating');
+    // Step 3: Download the result file
+    const resultPath = predictData.data[0].path || predictData.data[0];
+    const fileUrl = resultPath.startsWith('http') ? resultPath : HF_SPACE + '/file=' + resultPath;
+    const downloadRes = await fetch(fileUrl);
+    if (!downloadRes.ok) throw new Error('HF download failed');
+    return await downloadRes.blob();
+  };
+
+  const translateViaFastAPI = async (url, file, sourceLang, targetLang) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('target_lang', targetLang);
     formData.append('source_lang', sourceLang);
+    const response = await fetch(url + '/translate', {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) throw new Error(`Server error ${response.status}`);
+    const blob = await response.blob();
+    if (blob.type === 'application/json') {
+      const text = await blob.text();
+      const data = JSON.parse(text);
+      if (data.error) throw new Error(data.error);
+    }
+    return blob;
+  };
 
-    const processResponse = async (response) => {
-      if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        throw new Error(`Server error ${response.status}: ${text || 'Translation failed'}`);
-      }
-      const blob = await response.blob();
-      if (blob.type === 'application/json') {
-        const text = await blob.text();
-        const data = JSON.parse(text);
-        if (data.error) throw new Error(data.error);
-      }
-      return blob;
-    };
+  const handleTranslate = async () => {
+    if (!file) return;
+    setStatus('translating');
 
     try {
       let blob;
 
-      // Strategy: Try direct URL first (no timeout limit, fast)
-      // If adblocker blocks it, fall back to Vercel proxy
+      // Strategy: Try HF Spaces first (16GB RAM, no timeout)
+      // Fallback 1: Direct Render URL
+      // Fallback 2: Vercel proxy
       try {
-        const response = await fetch(DIRECT_URL + '/translate', {
-          method: 'POST',
-          body: formData,
-        });
-        blob = await processResponse(response);
-      } catch (directError) {
-        // Direct failed (likely adblocker) — retry through Vercel proxy
-        console.warn('Direct URL failed, retrying via proxy:', directError.message);
-        
-        // Need fresh FormData because the previous one was consumed
-        const retryFormData = new FormData();
-        retryFormData.append('file', file);
-        retryFormData.append('target_lang', targetLang);
-        retryFormData.append('source_lang', sourceLang);
-
-        const response = await fetch(PROXY_URL + '/translate', {
-          method: 'POST',
-          body: retryFormData,
-        });
-        blob = await processResponse(response);
+        blob = await translateViaGradio(file, sourceLang, targetLang);
+      } catch (hfError) {
+        console.warn('HF Spaces failed, trying Render:', hfError.message);
+        try {
+          blob = await translateViaFastAPI(FALLBACK_URL, file, sourceLang, targetLang);
+        } catch (renderError) {
+          console.warn('Render failed, trying proxy:', renderError.message);
+          blob = await translateViaFastAPI(PROXY_URL, file, sourceLang, targetLang);
+        }
       }
 
       const url = window.URL.createObjectURL(blob);
