@@ -28,8 +28,15 @@ function App() {
   const [fileName, setFileName] = useState('');
   const fileInputRef = useRef(null);
 
+  const DIRECT_URL = 'https://pdf-translator-backend-av6m.onrender.com';
+  const PROXY_URL = '/api';
+
+  // Wake up the Render backend immediately when the page loads
   useEffect(() => {
-    fetch('/api/').catch(() => {});
+    fetch(DIRECT_URL + '/').catch(() => {
+      // Direct blocked (adblocker), try via proxy
+      fetch(PROXY_URL + '/').catch(() => {});
+    });
   }, []);
 
   const handleDragOver = (e) => {
@@ -77,7 +84,7 @@ function App() {
   const handleSwapLanguages = () => {
     if (sourceLang === 'auto') {
       setSourceLang(targetLang);
-      setTargetLang('en'); // Default to English if swapping from auto
+      setTargetLang('en');
     } else {
       const temp = sourceLang;
       setSourceLang(targetLang);
@@ -94,26 +101,46 @@ function App() {
     formData.append('target_lang', targetLang);
     formData.append('source_lang', sourceLang);
 
-    try {
-      const apiUrl = '/api/translate';
-
-      // Use the Vercel proxy rewrite to avoid adblockers blocking the direct Render URL
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        body: formData,
-      });
-
+    const processResponse = async (response) => {
       if (!response.ok) {
-        throw new Error(`Server returned ${response.status}: Vercel proxy timeout or Backend crash. Please try clicking Translate again now that it's awake!`);
+        const text = await response.text().catch(() => '');
+        throw new Error(`Server error ${response.status}: ${text || 'Translation failed'}`);
       }
-
       const blob = await response.blob();
-      
-      // If it returned JSON with an error, the blob won't be a PDF. We can check the type.
       if (blob.type === 'application/json') {
-          const text = await blob.text();
-          const data = JSON.parse(text);
-          if (data.error) throw new Error(data.error);
+        const text = await blob.text();
+        const data = JSON.parse(text);
+        if (data.error) throw new Error(data.error);
+      }
+      return blob;
+    };
+
+    try {
+      let blob;
+
+      // Strategy: Try direct URL first (no timeout limit, fast)
+      // If adblocker blocks it, fall back to Vercel proxy
+      try {
+        const response = await fetch(DIRECT_URL + '/translate', {
+          method: 'POST',
+          body: formData,
+        });
+        blob = await processResponse(response);
+      } catch (directError) {
+        // Direct failed (likely adblocker) — retry through Vercel proxy
+        console.warn('Direct URL failed, retrying via proxy:', directError.message);
+        
+        // Need fresh FormData because the previous one was consumed
+        const retryFormData = new FormData();
+        retryFormData.append('file', file);
+        retryFormData.append('target_lang', targetLang);
+        retryFormData.append('source_lang', sourceLang);
+
+        const response = await fetch(PROXY_URL + '/translate', {
+          method: 'POST',
+          body: retryFormData,
+        });
+        blob = await processResponse(response);
       }
 
       const url = window.URL.createObjectURL(blob);
@@ -121,13 +148,9 @@ function App() {
       setFileName(`translated_${targetLang}_${file.name}`);
       setStatus('success');
     } catch (error) {
-      console.error(error);
+      console.error('Translation failed:', error);
       setStatus('error');
-      if (error.message === 'Failed to fetch') {
-        alert("Translation failed (Failed to fetch). This usually happens because an Ad-blocker (like uBlock Origin or Adblock Plus) is blocking our backend server (onrender.com). Please disable your adblocker for this site and try again.");
-      } else {
-        alert(error.message || "An error occurred during translation. Please try again.");
-      }
+      alert(error.message || "An error occurred during translation. Please try again.");
     }
   };
 
