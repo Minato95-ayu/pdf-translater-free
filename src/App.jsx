@@ -91,9 +91,11 @@ function App() {
     formData.append('source_lang', sourceLang);
 
     try {
-      const apiUrl = '/api/translate';
+      const apiUrl = import.meta.env.PROD 
+        ? 'https://pdf-translator-backend-av6m.onrender.com/translate' 
+        : '/api/translate';
 
-      // Use the Vercel proxy rewrite to avoid adblockers blocking the direct Render URL
+      // Use the direct backend URL in production to bypass Vercel's 10s proxy timeout limits
       const response = await fetch(apiUrl, {
         method: 'POST',
         body: formData,
@@ -119,7 +121,11 @@ function App() {
     } catch (error) {
       console.error(error);
       setStatus('error');
-      alert(error.message || "An error occurred during translation. Please try again.");
+      if (error.message === 'Failed to fetch') {
+        alert("Translation failed (Failed to fetch). This usually happens because an Ad-blocker (like uBlock Origin or Adblock Plus) is blocking our backend server (onrender.com). Please disable your adblocker for this site and try again.");
+      } else {
+        alert(error.message || "An error occurred during translation. Please try again.");
+      }
     }
   };
 
