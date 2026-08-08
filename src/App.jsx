@@ -91,11 +91,9 @@ function App() {
     formData.append('source_lang', sourceLang);
 
     try {
-      const apiUrl = import.meta.env.PROD 
-        ? 'https://pdf-translator-backend-av6m.onrender.com/translate' 
-        : '/api/translate';
+      const apiUrl = '/api/translate';
 
-      // Use the direct backend URL in production to bypass Vercel's payload limits
+      // Use the Vercel proxy rewrite to avoid adblockers blocking the direct Render URL
       const response = await fetch(apiUrl, {
         method: 'POST',
         body: formData,
