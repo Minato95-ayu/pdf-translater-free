@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, Form, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import fitz  # PyMuPDF
@@ -8,6 +8,9 @@ import shutil
 import uuid
 import requests
 import base64
+import gc
+import re
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from langdetect import detect
 
@@ -37,9 +40,12 @@ def ocr_image(image_bytes):
         b64 = base64.b64encode(image_bytes).decode('utf-8')
         payload['base64Image'] = 'data:image/png;base64,' + b64
         r = requests.post('https://api.ocr.space/parse/image', data=payload, timeout=20)
-        res = r.json()
-        if not res.get('IsErroredOnProcessing') and res.get('ParsedResults'):
-            return res['ParsedResults'][0]['ParsedText']
+        result = r.json()
+        # Free memory immediately
+        del b64
+        payload.clear()
+        if not result.get('IsErroredOnProcessing') and result.get('ParsedResults'):
+            return result['ParsedResults'][0]['ParsedText']
     except Exception as e:
         print(f"OCR Error: {e}")
     return ""
@@ -50,9 +56,8 @@ def fast_batch_translate(texts: list, target_lang: str, source_lang: str = 'auto
     batches = []
     current_batch = []
     current_len = 0
-    import re
     
-    # Pre-filter to avoid translating single English letters, numbers, or simple markers (e.g. "A", "B", "1. A")
+    # Pre-filter to avoid translating single English letters, numbers, or simple markers
     to_translate = []
     translated_map = {}
     for t in texts:
@@ -107,7 +112,8 @@ def fast_batch_translate(texts: list, target_lang: str, source_lang: str = 'auto
                 except:
                     translated_map[orig] = orig
 
-    with ThreadPoolExecutor(max_workers=50) as executor:
+    # Keep max_workers low to save memory (Render free = 512MB)
+    with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [executor.submit(process_batch, b) for b in batches]
         for f in as_completed(futures):
             pass
@@ -132,23 +138,23 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                     detected_lang = detect(sample_text)
                     if detected_lang == 'zh-cn':
                         detected_lang = 'zh-CN'
-                    # langdetect 'en' matches our 'en', 'hi' matches our 'hi'
-                    # If mismatch, raise specific error
                     if detected_lang != source_lang:
                         raise Exception("diya gya laungues information match nahi kar raah")
                 except Exception as e:
                     if str(e) == "diya gya laungues information match nahi kar raah":
                         raise e
+            del sample_text
 
         font_path = "font.ttf"
+        font_exists = os.path.exists(font_path)
+        archive = fitz.Archive(os.path.dirname(os.path.abspath(__file__)))
+        css = f"@font-face {{ font-family: 'noto'; src: url('font.ttf'); }} * {{ font-family: 'noto', sans-serif; }}"
         
-        for page in doc:
-            if os.path.exists(font_path):
-                page.insert_font(fontname="noto", fontfile=font_path)
-            else:
-                fontname = "helv" # fallback
+        for page_num in range(len(doc)):
+            page = doc[page_num]
             
-            used_font = "noto" if os.path.exists(font_path) else "helv"
+            if font_exists:
+                page.insert_font(fontname="noto", fontfile=font_path)
 
             text_dict = page.get_text("dict")
             text_blocks = []
@@ -184,7 +190,6 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                                 text += "\n"
                         
                         med_size = sorted(font_sizes)[len(font_sizes)//2] if font_sizes else 11
-                        from collections import Counter
                         most_common_color = Counter(colors).most_common(1)[0][0] if colors else 0
                         hex_color = "#{:06x}".format(most_common_color & 0xFFFFFF)
                         
@@ -197,11 +202,16 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                             ]
                             text_blocks.append((bbox[0], bbox[1], bbox[2], bbox[3], text, med_size, hex_color))
             
+            # Free text_dict memory
+            del text_dict
+            
             if len(text_blocks) == 0:
-                print("No text found, running OCR on page image...")
-                pix = page.get_pixmap(dpi=150)
+                print(f"Page {page_num+1}: No text found, running OCR...")
+                pix = page.get_pixmap(dpi=100)  # Lower DPI to save memory (was 150)
                 img_bytes = pix.tobytes("png")
+                del pix  # Free pixmap memory immediately
                 extracted_text = ocr_image(img_bytes)
+                del img_bytes  # Free image bytes
                 
                 if extracted_text and len(extracted_text.strip()) > 2:
                     try:
@@ -211,14 +221,16 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                     page.add_redact_annot(page.rect, fill=(1, 1, 1))
                     page.apply_redactions(images=2, graphics=1)
                     text_rect = fitz.Rect(20, 20, page.rect.width - 20, page.rect.height - 20)
-                    css = f"@font-face {{ font-family: 'noto'; src: url('font.ttf'); }} * {{ font-family: 'noto', sans-serif; }}"
                     html = f"<style>{css}</style><div style=\"background-color: white; font-size: 12pt; color: black; line-height: 1.2;\">{translated_text}</div>"
-                    archive = fitz.Archive(os.path.dirname(os.path.abspath(__file__)))
                     page.insert_htmlbox(text_rect, html, archive=archive, scale_low=0.1)
+                    del extracted_text, translated_text
+                
+                gc.collect()
                 continue
             
             unique_texts = list(set([b[4].replace('\n', ' ').strip() for b in text_blocks if b[4].strip()]))
             translated_map = fast_batch_translate(unique_texts, target_lang, source_lang)
+            del unique_texts
             
             blocks_to_translate = []
             for block in text_blocks:
@@ -226,6 +238,8 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
                 translated_text = translated_map.get(orig_text, orig_text)
                 if translated_text != orig_text:
                     blocks_to_translate.append((block, orig_text, translated_text))
+            
+            del translated_map
             
             # First pass: Erase only translated text rectangles
             for block, _, _ in blocks_to_translate:
@@ -235,23 +249,22 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
             page.apply_redactions(images=2, graphics=1)
 
             # Second pass: Insert translated text
-            archive = fitz.Archive(os.path.dirname(os.path.abspath(__file__)))
-            css = f"@font-face {{ font-family: 'noto'; src: url('font.ttf'); }} * {{ font-family: 'noto', sans-serif; }}"
-            
             for block, orig_text, translated_text in blocks_to_translate:
                 rect = fitz.Rect(block[:4])
                 med_size = block[5]
                 hex_color = block[6]
                 
-                # Strictly preserve the original bounding box to avoid overlapping with adjacent blocks
                 write_rect = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1)
-                
                 html = f"<style>{css}</style><div style=\"background-color: white; font-size: {med_size}pt; color: {hex_color}; line-height: 1.2;\">{translated_text}</div>"
-                # scale_low=0.1 automatically scales down font size until it fits
                 page.insert_htmlbox(write_rect, html, archive=archive, scale_low=0.1)
+            
+            # Free memory after each page
+            del text_blocks, blocks_to_translate
+            gc.collect()
                     
         doc.save(output_path, garbage=4, deflate=True)
         doc.close()
+        gc.collect()
     except Exception as e:
         if str(e) == "diya gya laungues information match nahi kar raah":
             raise e
@@ -259,6 +272,15 @@ def translate_pdf_task(input_path: str, output_path: str, target_lang: str, sour
 
 from fastapi.staticfiles import StaticFiles
 app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
+
+def cleanup_files(*paths):
+    """Remove temporary files to free disk space"""
+    for p in paths:
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except:
+            pass
 
 @app.post("/translate")
 async def translate_pdf_endpoint(
@@ -277,17 +299,22 @@ async def translate_pdf_endpoint(
     try:
         translate_pdf_task(input_path, output_path, target_lang, source_lang)
     except Exception as e:
+        cleanup_files(input_path, output_path)
         if str(e) == "diya gya laungues information match nahi kar raah":
             return {"error": str(e)}
     
+    # Delete input file immediately — no longer needed
+    cleanup_files(input_path)
+    
     if not os.path.exists(output_path):
         return {"error": "Failed to translate PDF"}
-        
-    from fastapi.responses import FileResponse
+    
+    from starlette.background import BackgroundTask
     return FileResponse(
         path=output_path, 
         filename=f"translated_{file.filename}",
-        media_type='application/pdf'
+        media_type='application/pdf',
+        background=BackgroundTask(cleanup_files, output_path)
     )
 
 @app.get("/")
