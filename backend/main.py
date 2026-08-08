@@ -107,7 +107,7 @@ def fast_batch_translate(texts: list, target_lang: str, source_lang: str = 'auto
                 except:
                     translated_map[orig] = orig
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=50) as executor:
         futures = [executor.submit(process_batch, b) for b in batches]
         for f in as_completed(futures):
             pass

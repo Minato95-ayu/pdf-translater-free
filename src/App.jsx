@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { UploadCloud, FileText, Loader2, CheckCircle, Download, RefreshCw } from 'lucide-react';
 import './index.css';
 import logo from './assets/logo.png';
@@ -27,6 +27,10 @@ function App() {
   const [downloadUrl, setDownloadUrl] = useState('');
   const [fileName, setFileName] = useState('');
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    fetch('/api/').catch(() => {});
+  }, []);
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -91,18 +95,16 @@ function App() {
     formData.append('source_lang', sourceLang);
 
     try {
-      const apiUrl = import.meta.env.PROD 
-        ? 'https://pdf-translator-backend-av6m.onrender.com/translate' 
-        : '/api/translate';
+      const apiUrl = '/api/translate';
 
-      // Use the direct backend URL in production to bypass Vercel's 10s proxy timeout limits
+      // Use the Vercel proxy rewrite to avoid adblockers blocking the direct Render URL
       const response = await fetch(apiUrl, {
         method: 'POST',
         body: formData,
       });
 
       if (!response.ok) {
-        throw new Error(`Server returned ${response.status}: Please make sure your backend is linked!`);
+        throw new Error(`Server returned ${response.status}: Vercel proxy timeout or Backend crash. Please try clicking Translate again now that it's awake!`);
       }
 
       const blob = await response.blob();
